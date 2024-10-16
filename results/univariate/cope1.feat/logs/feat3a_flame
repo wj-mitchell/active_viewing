@@ -1,0 +1,12 @@
+</pre><hr>Higher-level stats<br><pre>
+
+cat ../design.lcon | awk '{ print  }' > design.lcon
+
+/usr/local/fsl/bin/fslsplit mask tmpmask -z
+
+/usr/local/fsl/bin/fslsplit filtered_func_data tmpcope -z
+
+/usr/local/fsl/bin/fslsplit var_filtered_func_data tmpvarcope -z
+
+/usr/local/fsl/bin/fslsplit tdof_filtered_func_data tmptdof -z
+/usr/local/fsl/bin/flameo --cope=tmpcope0000 --vc=tmpvarcope0000 --dvc=tmptdof0000 --mask=tmpmask0000 --ld=stats0000 --dm=design.mat --cs=design.grp --tc=design.con  --io --runmode=flame1

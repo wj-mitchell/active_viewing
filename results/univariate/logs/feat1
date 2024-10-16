@@ -1,0 +1,27 @@
+
+/bin/cp /data/Uncertainty/scripts/2_Analysis/dir_ActiveVPassive/11_script_design_lvl3.fsf design.fsf
+
+/usr/local/fsl/bin/feat_model design
+
+mkdir .files;cp /usr/local/fsl/doc/fsl.css .files;cp -r /usr/local/fsl/doc/images .files/images
+
+/usr/local/fsl/bin/fsl_sub -T 60 -l logs -N feat2_pre   /usr/local/fsl/bin/feat /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/design.fsf -D /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat -gfeatprep
+2104851
+
+/usr/local/fsl/bin/fsl_sub -T 60 -l logs -N feat3a_flame -j 2104851  /usr/local/fsl/bin/feat /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat/design.fsf -D /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat -I 1 -flame1
+2147147
+
+/usr/local/fsl/bin/fsl_sub -T 189 -l logs -N feat3b_flame -j 2147147 -t ./.flame
+2149897
+
+/usr/local/fsl/bin/fsl_sub -T 60 -l logs -N feat3c_flame -j 2149897  /usr/local/fsl/bin/feat /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat/design.fsf -D /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat -flame3
+2203529
+
+/usr/local/fsl/bin/fsl_sub -T 60 -l logs -N feat4_post -j 2203529  /usr/local/fsl/bin/feat /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat/design.fsf -D /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat -poststats 1
+2204747
+
+/usr/local/fsl/bin/fsl_sub -T 1 -l logs -N feat5_stop -j 2204747  /usr/local/fsl/bin/feat /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat/design.fsf -D /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat -stop
+2207151
+
+/usr/local/fsl/bin/fsl_sub -T 1 -l logs -N feat5_stop -j 2207151  /usr/local/fsl/bin/feat /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat/cope1.feat/design.fsf -D /data/Uncertainty/data/deriv/pipeline_1/fmriprep/analysis-ActiveVPassive_task-Uncertainty_lvl-3.gfeat -stop
+2207293
