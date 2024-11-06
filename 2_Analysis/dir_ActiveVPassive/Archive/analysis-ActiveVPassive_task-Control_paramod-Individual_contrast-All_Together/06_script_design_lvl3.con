@@ -1,0 +1,10 @@
+/ContrastName1	mean+ 
+/ContrastName2	mean- 
+/NumWaves	4
+/NumContrasts	2
+/PPheights		1.096592e+00	1.096592e+00
+/RequiredEffect		0.838	0.838
+
+/Matrix
+1.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 
+-1.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 
