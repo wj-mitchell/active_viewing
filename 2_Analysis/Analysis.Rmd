@@ -1,0 +1,748 @@
+---
+title: "Analysis"
+author: "William J. Mitchell"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Setup}
+## If the pacman package manager is not currently installed on this system, install it.
+if (require("pacman") == FALSE){
+  install.packages("pacman")
+}
+
+## Loading in my packages with my pacman manager
+pacman::p_load(corrplot,
+               here,
+               lme4,
+               lmerTest,
+               performance,
+               reshape2,
+               tibble,
+               tidyverse)
+
+## Setting Working Directory
+(dir_Work <- here::here())
+
+## Loading in our custom cleaner function
+source(paste0(dir_Work,"/2_Analysis/func_RatingCor.R"))
+```
+
+```{r Identifying Halfway Marker}
+# First half ends at Event 19, Second Half starts at Event 20
+Halfway <- 19.5
+```
+
+## ----- READING IN RATING DATA -----
+
+```{r Generating Rating Correations For First Half Folks}
+## Using the custom cleaner function on First Half Raters
+df_FH <- Rating_Cor(Data = paste0(dir_Work, "/3_Data/Ratings/df_behav.csv"),
+                    Cond = "A",
+                    SceneBreaks = c(0, 189, 241, 243, 419,
+                                   431, 521, 527, 581, 625,
+                                   757, 797, 827, 877, 885,
+                                   983, 1133, 1273, 1291, 1337),
+                   RunCor = F) %>%
+         t() %>%
+         as.data.frame()
+
+## Saving the PIDs of first half raters
+raters_FH <- colnames(df_FH)
+
+## Adding a Scene variable
+df_FH$Scene <- 1:nrow(df_FH)
+
+## Pivoting the dataframe wider
+df_FH <- df_FH %>%
+         pivot_longer(cols = !Scene,
+                      names_to = "PID",
+                      values_to = "Rating")
+```
+
+```{r Generating Rating Correations For First Half Folks}
+## Using the custom cleaner function on First Half Raters
+df_SH <- Rating_Cor(Data = paste0(dir_Work, "/3_Data/Ratings/df_behav.csv"),
+                    Cond = "B",
+                    SceneBreaks = c(0, 14, 28, 75, 158,
+                                   186, 279, 283, 335,
+                                   398, 405, 681, 877,
+                                   604, 1062, 1067, 1337),
+                    RunCor = F) %>%
+         t() %>%
+         as.data.frame()
+
+## Saving the PIDs of first half raters
+raters_SH <- colnames(df_SH)
+
+## Adding a Scene variable
+df_SH$Scene <- ceiling(Halfway):(floor(Halfway) + nrow(df_SH))
+
+## Pivoting the dataframe wider
+df_SH <- df_SH %>%
+         pivot_longer(cols = !Scene,
+                      names_to = "PID",
+                      values_to = "Rating")
+```
+
+```{r Merging Dataframe for First Half and Last Half Rating Correlations}
+# Binding the dataframes together for First and Second Half Raters
+df_rating <- rbind(df_FH,
+                   df_SH)
+
+# Cleaning our space
+rm(df_FH,df_SH)
+```
+
+```{r Calculating the Average Certainty Signal}
+# Z scoring ratings
+df_rating$Rating_z <- df_rating$Rating %>%
+                      scale() %>%
+                      as.numeric()
+
+# Creating an average rating per scene
+rating_per_scene <- df_rating %>%
+                group_by(Scene) %>%
+                summarise(average_rating = mean(Rating_z)) %>%
+                .[,2] %>%
+                unlist() %>%
+                as.numeric() %>% 
+                as.array()
+```
+
+## ----- READING IN QUALTRICS DATA -----
+
+```{r Pulling in the Qualtrics Data}
+## From this we want to know who participants had thought had done it at the end of each section
+df_qual <- read.csv(paste0(dir_Work, "/3_Data/Qualtrics/df_qualtrics.csv")) %>%
+           select("PID", "TheoryMid", "TheoryEnd")
+
+## Renaming those columns
+names(df_qual) <- c("PID", "Mid_Theory", "End_Theory")
+
+## Reducing dimentionality 
+df_qual$Mid_Theory[df_qual$Mid_Theory != "Jonathan Fraser"] <- "Not Jonathan Fraser"
+df_qual$End_Theory[df_qual$End_Theory != "Jonathan Fraser"] <- "Not Jonathan Fraser"
+
+## Noting who rated which half
+df_qual$Rated <- NA
+df_qual$Rated[which(df_qual$PID %in% raters_FH)] <- "First" 
+df_qual$Rated[which(df_qual$PID %in% raters_SH)] <- "Last" 
+```
+
+## ----- READING IN RECALL DATA -----
+
+```{r Reading in the Raw Recall DAta}
+df_recall <- read.csv(paste0(dir_Work,"/3_Data/Recall/df_recall.csv")) %>%
+  
+      # Remove all rows in which every value is NA
+      na.omit()
+```
+
+# ----- SERIAL POSITION CURVE ANALYSIS -----
+
+## Organizing the data
+
+```{r Creating a New Empty Dataframe to Rehouse the Data Into}
+# Save every unique PID as a variable
+PIDs <- unique(df_recall$PID)
+
+# Specifying the names of rows and columns in the new dataframe
+cols <- c("PID", "Scene", "Recalled")
+rows <- 1:((length(PIDs)) * 35)
+
+# Creating  the new dataframe
+df_recall_wide <- as.data.frame(matrix(NA, 
+                               nrow = length(rows), 
+                               ncol =  length(cols),
+                               dimnames = list(rows,
+                                               cols)))
+
+# Cleaning space
+rm(cols,rows)
+```
+
+```{r Filling in Constant Information (i.e., PID and Scene)}
+# Repeating the numbers 1 through 35 a number of times equivalent to the number of unique PIDs there are
+df_recall_wide$Scene <- PIDs %>%
+                length() %>%
+                rep(1:35, .)
+
+# Repeating each of the unique PIDs a number of times equivalent to the number of scenes there are and sorting them alphanumerically
+df_recall_wide$PID <- PIDs %>%
+              rep(., 35) %>%
+              sort()
+```
+
+```{r Filling in Recall Data}
+# Make all data equal to 0
+df_recall_wide$Recalled <- 0
+
+# Iterate through every PID
+for (PID in PIDs){
+  
+  # Iterate through every scene
+  for (SCENE in unique(df_recall_wide$Scene)){
+    
+    # If any PID / Scene combo is present in the original dataframe
+    if (any(df_recall$PID == PID & df_recall$Scenes == SCENE)){
+      
+      # Then find that PID / Scene Combo in the new dataframe and change the 0 to a 1
+      df_recall_wide$Recalled[df_recall_wide$PID == PID & df_recall_wide$Scene == SCENE] <- 1
+    }
+  }
+}
+# 
+# # Iterate through participant
+# for (PID in PIDs){
+#   
+#   # Set the order tracker to 1
+#   tracker <- 1
+#   
+#   # Create a temporary dataframe of only this participant's observations
+#   df_temp <- df_recall[df_recall$PID == PID,]
+#   
+#   # Iterate through the rows of the temporary dataframe
+#   for (ROW in 1:nrow(df_temp)){
+#     
+#     # Record the order that each scene was recalled within
+#     df_recall_wide$Order[df_recall_wide$PID == PID & df_recall_wide$Scene == df_temp$Scenes[ROW]] <- tracker
+#     
+#     # Increment the tracker by 1
+#     tracker <- tracker + 1
+#   }
+#  
+#   # NOTE: Subjects recalling different numbers of events means that the raw numbers may not be comparable. The last event recalled for one subject might be the 18th event while the same event might be  the 22nd for another subject. As a result, we're going to do a relative order adjustment, which is effectively just dividing the raw order value by the total number of events recalled by this subject. 
+#   # Adjusting the order values according to the tracker maximum, in case we want to keep variance standard across participants
+#   df_recall_wide$Order_Adj[df_recall_wide$PID == PID] <- df_recall_wide$Order[df_recall_wide$PID == PID] / tracker
+#    
+#   # Reset our variables
+#   rm(tracker, df_temp)
+# }
+# 
+# ## Cleaning Space
+# rm(PID, SCENE)
+```
+
+```{r Pivoting the Dataframe to Wider Format}
+# Patching up the PID variable names (Can't have variable names that start with numbers)
+df_recall_wide$PID <- paste0("SR-", sprintf("%04d", as.integer(df_recall_wide$PID)))
+PIDs <- paste0("SR-", sprintf("%04d", PIDs))
+
+# Pivoting to a wider format
+df_recall_wide <- pivot_wider(df_recall_wide,
+                           names_from = PID,
+                           values_from = Recalled)
+
+```
+
+```{r Calculating the Average}
+# Calculating the average relative order of each scene
+df_recall_wide$GroupAvg <- rowMeans(df_recall_wide[,2:ncol(df_recall_wide)], na.rm = T)
+```
+
+## Analyzing / Visualizing the Data
+
+```{r Visualizing the Serial Position Curve}
+# Removing B-Roll; I checked and not a single one of these ever got recalled. 
+# I'm worried leaving these in is misleading; it leads people to think there's more variance around major show events than there might actually be
+df_recall_wide <- df_recall_wide[-c(3,7,14,26,29,32,34),]
+
+# Plotting
+plot(df_recall_wide$Scene, df_recall_wide$GroupAvg, type = "l")
+```
+
+```{r Examining the Correlation between Rating Average and Group Recall}
+# Removing B-Roll Scenes
+rating_per_scene <- rating_per_scene[-c(3,7,14,26,29,32,34)]
+
+# Correlating 
+cor(df_recall_wide$GroupAvg, rating_per_scene)
+plot(df_recall_wide$GroupAvg, rating_per_scene)
+```
+
+```{r Identifying those participants that fit in both theory categories}
+Jon_FH <- df_qual$PID[df_qual$Mid_Theory == "Jonathan Fraser"]
+Jon_SH <- df_qual$PID[df_qual$End_Theory == "Jonathan Fraser"]
+NoJon_FH <- df_qual$PID[df_qual$Mid_Theory == "Not Jonathan Fraser"]
+NoJon_SH <- df_qual$PID[df_qual$End_Theory == "Not Jonathan Fraser"]
+```
+
+```{r Calculating Averages by Theory}
+df_recall_wide$Jon_Avg <- NA
+df_recall_wide$NoJon_Avg <- NA
+
+df_recall_wide$Jon_Avg[1:floor(Halfway)] <- rowMeans(df_recall_wide[1:floor(Halfway),
+                                                                           which(names(df_recall_wide) %in% Jon_FH)], 
+                                                        na.rm = T)
+
+df_recall_wide$Jon_Avg[ceiling(Halfway):nrow(df_recall_wide)] <- rowMeans(df_recall_wide[ceiling(Halfway):nrow(df_recall_wide),
+                                                                                                    which(names(df_recall_wide) %in% Jon_SH)], 
+                                                                                 na.rm = T)
+df_recall_wide$NoJon_Avg[1:floor(Halfway)] <- rowMeans(df_recall_wide[1:floor(Halfway),
+                                                                           which(names(df_recall_wide) %in% NoJon_FH)], 
+                                                          na.rm = T)
+df_recall_wide$NoJon_Avg[ceiling(Halfway):nrow(df_recall_wide)] <- rowMeans(df_recall_wide[ceiling(Halfway):nrow(df_recall_wide),
+                                                                                                    which(names(df_recall_wide) %in% NoJon_SH)], 
+                                                                                   na.rm = T)
+```
+
+```{r}
+df_long <- df_recall_wide %>%
+    pivot_longer(cols = starts_with("SR-"),
+                 names_to = "PID",
+                 values_to = "Recalled") %>%
+    select(c(PID,Scene,Recalled))
+
+df_qual <- df_qual %>%
+           select(c(PID,Rated)) %>%
+           subset(!is.na(.$Rated))
+
+df_long <- merge(df_long,df_qual, by = "PID")
+
+df_long$Half <- NA
+df_long$Half[df_long$Scene < 20] <- "First"
+df_long$Half[df_long$Scene > 19] <- "Last"
+df_long$Congruent <- NA
+df_long$Congruent[df_long$Rated == df_long$Half] <- "Rated"
+df_long$Congruent[df_long$Rated != df_long$Half] <- "Not Rated"
+df_long$Recalled[df_long$Recalled == 1] <- "Recalled"
+df_long$Recalled[df_long$Recalled == 0] <- "Not Recalled"
+
+chisq.test(x = df_long$Congruent,
+           y = df_long$Recalled)
+```
+
+```{r}
+df_long$Recalled_Cat <- 0
+df_long$Recalled_Cat[df_long$Recalled == "Recalled"] <- 1
+
+df_summary <- df_long %>%
+  group_by(PID, Congruent) %>%
+  summarize(Proportion_Recalled = mean(Recalled_Cat == 1, na.rm = TRUE))
+
+t.test(x = df_summary$Proportion_Recalled[df_summary$Congruent == "Rated"],
+       y = df_summary$Proportion_Recalled[df_summary$Congruent == "Not Rated"],
+       paired = T)
+```
+
+
+```{r Visualizing Regulation Chi-Square}
+  plot <- ggplot(data = df_long, aes(x = Congruent, color = Recalled, fill = Recalled)) +
+        geom_bar() +
+        # scale_x_discrete("Condition") +
+        scale_y_continuous(breaks = c(0,100,200,300,400)) +
+        labs(
+             x = NULL,
+             y ="Frequency") +
+        scale_color_brewer() +
+        scale_fill_brewer(palette = "Accent") +
+        coord_cartesian(ylim=c(0.0, 425.0)) +
+        theme_classic() +
+        theme(plot.title = element_text(face="bold", size=8, hjust = 0.5)) +
+        theme(plot.subtitle = element_text(size = 10, hjust = 0.5, face = "italic")) +
+        theme(plot.caption = element_text(size = 8, hjust = 0.0, face = "italic")) +
+        theme(axis.title = element_text(size = 10)) +
+        theme(axis.text.x = element_text(size = 14, color = "Black")) +
+        theme(axis.text.y = element_text(size = 12, color = "Black")) +
+        theme(legend.key.size = unit(0.5, 'cm')) +
+        theme(legend.title = element_text(size=8)) +
+        theme(legend.text = element_text(size=6))
+
+  plot
+
+
+```
+
+```{r}
+rating <- paste0(dir_Work, "/3_Data/conditions.csv") %>%
+  read.csv() %>% 
+  .[,1:2]
+
+df_rsa <- df_recall_wide %>%
+  
+  # Step 1: Select only the Assessment columns
+  select(starts_with("SR-")) %>%
+
+  # Step 2: Calculate pairwise correlations across all Assessment columns
+  cor(use = "complete.obs") %>%
+  
+  # Step 3: Remove the upper triangle by setting it to NA
+  { .[upper.tri(., diag = TRUE)] <- NA; . } %>%
+
+  # Step 4: Melt the matrix for ggplot
+  melt(na.rm = TRUE) %>%
+  
+  # Step 5: Add condition columns by joining with rating data
+  left_join(rating, by = c("Var1" = "Subject")) %>%
+  rename(Condition_Var1 = Condition) %>%
+  left_join(rating, by = c("Var2" = "Subject")) %>%
+  rename(Condition_Var2 = Condition) %>%
+  
+  # Step 6: Add a column indicating if the conditions match or not
+  mutate(Condition_Match = ifelse(Condition_Var1 == Condition_Var2, "Match", "Do Not Match"))
+
+# Calculating if there's a difference by condition in a t-test
+print(t.test(x = df_rsa$value[df_rsa$Condition_Match == "Match"],
+             y = df_rsa$value[df_rsa$Condition_Match == "Do Not Match"]))
+  
+  # for reproducibility
+  set.seed(123) 
+  
+  # Assuming `similarity_matrix` is your dataframe with same/different condition categorization
+  observed_diff <- df_rsa %>%
+    group_by(Condition_Match) %>%
+    summarize(mean_correlation = mean(value)) %>%
+    spread(Condition_Match, mean_correlation) %>%
+    summarize(diff = `Match` - `Do Not Match`) %>%
+    pull(diff)
+  
+  # Initialize parameters
+  n_permutations <- 5000
+  permuted_diffs <- numeric(n_permutations)
+  
+  # Permutation loop
+  for (i in 1:n_permutations) {
+    
+    # Randomly shuffle condition labels
+    shuffled_conditions <- sample(df_rsa$Condition_Match)
+    
+    # Calculate mean difference for shuffled data
+    permuted_diff <- df_rsa %>%
+      mutate(Shuffled_Condition = shuffled_conditions) %>%
+      group_by(Shuffled_Condition) %>%
+      summarize(mean_correlation = mean(value)) %>%
+      spread(Shuffled_Condition, mean_correlation) %>%
+      summarize(diff = `Match` - `Do Not Match`) %>%
+      pull(diff)
+    
+    # Store the permuted difference
+    permuted_diffs[i] <- permuted_diff
+  }
+  
+  # Calculate p-value
+  p_value <- mean(abs(permuted_diffs) >= abs(observed_diff))
+  
+  # Display results
+  cat("Observed Difference:", observed_diff, "\n")
+  cat("p-value:", p_value, "\n")
+
+
+
+```
+
+```{r Calculating Averages by Rating Status}
+df_recall_wide$FH_Avg <- NA
+df_recall_wide$SH_Avg <- NA
+
+df_recall_wide$FH_Avg <- rowMeans(df_recall_wide[,which(names(df_recall_wide) %in% raters_FH)], 
+                                     na.rm = T)
+df_recall_wide$SH_Avg <- rowMeans(df_recall_wide[, which(names(df_recall_wide) %in% raters_SH)], 
+                                                          na.rm = T)
+
+## Cleaning Our Space
+rm(Jon_FH, Jon_SH, NoJon_FH, NoJon_SH, raters_FH, raters_SH)
+```
+
+```{r Standard Serial Position Curve}
+# Create the first plot
+plot(df_recall_wide$Scene, df_recall_wide$FH_Avg, type = "l", 
+     col = "blue", xlab = "Scene Number", ylab = "Proportion Recalled", 
+     main = "Serial Position Curve - First v. Second Half")
+
+# Add the second line
+lines(df_recall_wide$Scene, df_recall_wide$SH_Avg, type = "l", col = "red")
+```
+
+
+```{r Standard Serial Position Curve}
+# Create the first plot
+plot(df_recall_wide$Scene, df_recall_wide$Jon_Avg, type = "l", 
+     col = "green", xlab = "Scene Number", ylab = "Proportion Recalled", 
+     main = "Serial Position Curve - Jonathan v. Not Jonathan Theory")
+
+# Add the second line
+lines(df_recall_wide$Scene, df_recall_wide$NoJon_Avg, type = "l", col = "purple")
+```
+
+## Synchrony Analysis
+
+```{r Calculating Recall Synchrony}
+## Constructing a correlation matrix
+df_recall_cor <- cor(df_recall_wide[,which(str_detect(colnames(df_recall_wide), "SR-"))],
+                     method = "spearman")
+
+# Convert the correlation matrix to a long format dataframe
+df_recall_cor <- melt(df_recall_cor)
+  
+# Name the columns for clarity
+names(df_recall_cor) <- c("PID_2", "PID_1", "Recall_Correlation")
+  
+# Remove redundant pairs (upper triangle and diagonal)
+Delete_Rows <- NULL
+for (ROW in 1:nrow(df_recall_cor)){
+  if (which(df_recall_cor$PID_1[ROW] == sort(PIDs)) >= which(df_recall_cor$PID_2[ROW] == sort(PIDs)))
+    Delete_Rows <- c(Delete_Rows, ROW)
+}
+df_recall_cor <- df_recall_cor[-Delete_Rows,]
+```
+
+```{r Calculating Behavioral Synchrony}
+df_FH <- Rating_Cor(Data = paste0(dir_Work, "/Data/df_behav_.csv"),
+                    Cond = "A",
+                    SceneBreaks = c(0, 189, 241, 243, 419,
+                                   431, 521, 527, 581, 625,
+                                   757, 797, 827, 877, 885,
+                                   983, 1133, 1273, 1291, 1337),
+                   RunCor = T) 
+
+df_SH <- Rating_Cor(Data = paste0(dir_Work, "/Data/df_behav_.csv"),
+                    Cond = "B",
+                    SceneBreaks = c(0, 14, 28, 75, 158,
+                                   186, 279, 283, 335,
+                                   398, 405, 681, 877,
+                                   604, 1062, 1067, 1337),
+                    RunCor = T) 
+
+# Binding the dataframes together for First and Second Half Raters
+df_rating_cor <- rbind(df_FH,
+                       df_SH)
+
+# Name the columns for clarity
+names(df_rating_cor) <- c("PID_2", "PID_1", "Rating_Correlation")
+
+## Cleaning Space 
+rm(df_FH, df_SH)
+```
+
+```{r Merging Dataframes}
+df_cor <- merge(df_recall_cor,
+                df_rating_cor,
+                by = c("PID_1", "PID_2"))
+```
+
+```{r}
+df_cor$Theory <- NA
+
+# Iterating through each PID twice
+for (PID1 in unique(df_qual$PID)){
+  for (PID2 in unique(df_qual$PID)){
+    if (PID1 != PID2){ 
+      if (df_qual$Rated[df_qual$PID == PID1] == "First" & !is.na(df_qual$Rated[df_qual$PID == PID1])){
+        if (df_qual$Mid_Theory[df_qual$PID == PID1] == df_qual$Mid_Theory[df_qual$PID == PID2]){
+          df_cor$Theory[df_cor$PID_1 == PID1 & df_cor$PID_2 == PID2] <- "Same"
+        }
+        if (df_qual$Mid_Theory[df_qual$PID == PID1] != df_qual$Mid_Theory[df_qual$PID == PID2]){
+          df_cor$Theory[df_cor$PID_1 == PID1 & df_cor$PID_2 == PID2] <- "Different"
+        }
+      }
+      if (df_qual$Rated[df_qual$PID == PID1] == "Last"& !is.na(df_qual$Rated[df_qual$PID == PID1] )){
+        if (df_qual$End_Theory[df_qual$PID == PID1] == df_qual$End_Theory[df_qual$PID == PID2]){
+          df_cor$Theory[df_cor$PID_1 == PID1 & df_cor$PID_2 == PID2] <- "Same"
+        }
+        if (df_qual$End_Theory[df_qual$PID == PID1] != df_qual$End_Theory[df_qual$PID == PID2]){
+          df_cor$Theory[df_cor$PID_1 == PID1 & df_cor$PID_2 == PID2] <- "Different"
+        }
+      }
+    }
+  }
+}
+```
+
+```{r Running a null HLM to see if Rating Synchrony Predicts Recall Synchrony}
+m0 <- lmer(Recall_Correlation ~ 1 + (1|PID_1) + (1|PID_2), data = df_cor, REML = F)
+icc(m0)
+```
+
+```{r Testing Our Hypothesized Interaction Model}
+m1 <- lmer(Recall_Correlation ~ Rating_Correlation * Theory + (1|PID_1) + (1|PID_2), data = df_cor, REML = F)
+summary(m1)
+```
+
+```{r Specifying a Comparison Model for Comparison}
+m2 <- lmer(Recall_Correlation ~ Rating_Correlation + Theory + (1|PID_1) + (1|PID_2), data = df_cor, REML = F)
+anova(m2,m1)
+```
+
+```{r}
+sjPlot::plot_model(m1, type = "int")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ----- STUFF I DIDN'T UPDATE OR CLEAN YET -----
+
+
+
+```{r Generating Fake Recall Correlation Data}
+# Setting a seed so that we can generate the same random sequence every time; the number is arbitrary, but you need to keep it the same if you want the same sequence
+set.seed(123)
+
+# This is the equivalent, I think, to running correlations across the serial position curve (likelihood of remembering or forgetting an event)
+# I limited the x sequence so that the correlations have a slightly positive skew as we might expect
+df_cor$Cor_Scenes <- rnorm(nrow(df_cor), 
+                           mean = sample(size = 1, x = seq(0.20, 0.45, 0.01)),
+                           sd = sample(size = 1, x = seq(0.15, 0.30, 0.01)))
+
+# This is equivalent to the Probability of First Recall Analysis, examining whether both people indicated the same scene first
+# The probability argument is just to tip the scales more towards match than mismatch
+df_cor$Match_FirstScene <- sample(x = c("Match", "Mismatch"), 
+                                  size = nrow(df_cor),
+                                  replace = T,
+                                  prob = c(0.8,0.2))
+
+```
+
+```{r Generating Rating Scores}
+## Using the custom cleaner function on First Half Raters
+df_FH <- Rating_Cor(Data = paste0(dir_Work, "/Data/df_behav_.csv"),
+                   Cond = "A",
+                   SceneBreaks = c(0, 189, 241, 243, 419,
+                                   431, 521, 527, 581, 625,
+                                   757, 797, 827, 877, 885,
+                                   983, 1133, 1273, 1291, 1337),
+                   RunCor = F)
+
+## Using the custom cleaner function on First Half Raters
+df_SH <- Rating_Cor(Data = paste0(dir_Work, "/Data/df_behav_.csv"),
+                   Cond = "B",
+                   SceneBreaks = c(0, 15, 29, 75, 159,
+                                   187, 279, 283, 335,
+                                   399, 405, 681, 877,
+                                   605, 1063, 1067, 1337),
+                   RunCor = F)
+```
+
+```{r Cleaning the raw rating dataframe}
+## Renaming the column headers
+names(df_FH) <- c(paste0("Scene_0", 1:9), paste0("Scene_", 10:ncol(df_FH)))
+names(df_SH) <- paste0("Scene_", 20:35)
+
+## Adding PID as a column
+df_FH <- rownames_to_column(df_FH, "PID")
+df_SH <- rownames_to_column(df_SH, "PID")
+
+## Add a condition Variable
+df_FH$Condition <- "FirstHalf"
+df_SH$Condition <- "LastHalf"
+
+## Pivot Both Longer
+df_FH <- pivot_longer(data=df_FH, 
+                      cols = starts_with("Scene_"),
+                      names_to = "Scene",
+                      values_to = "Value_Rating")
+df_SH <- pivot_longer(data=df_SH, 
+                      cols = starts_with("Scene_"),
+                      names_to = "Scene",
+                      values_to = "Value_Rating")
+
+# Binding the dataframes together for First and Second Half Raters
+df_rating <- rbind(df_FH,
+                   df_SH)
+
+# Cleaning our space
+rm(df_FH,df_SH, Rating_Cor)
+```
+
+So even though we only have ratings for the certain halves, we want a row for every scene for every participant, so I'm going to create a new dataframe that has that and copy the data we already processed over.
+
+```{r Doing a little bit of hacky thing}
+# Specifying PID and Scene
+PID <- sort(rep(x = unique(df_rating$PID), 
+                length(unique(df_rating$Scene))))
+Scene <- rep(x = unique(df_rating$Scene), 
+             length(unique(df_rating$PID)))
+
+# Creating the temporary dataframe
+df_temp <- data.frame(PID,Scene)
+
+# Adding placeholder columns full of NAs
+df_temp$Condition <- NA
+df_temp$Value_Rating <- NA
+
+# Filling in the missing data with a for loop
+# Iterating through each PID
+for (PID in unique(df_temp$PID)){
+  
+  # Copying the condition for that PID    
+  df_temp$Condition[df_temp$PID == PID] <- df_rating$Condition[df_rating$PID == PID][1]
+  
+  # Iterating through each Scene
+  for (SCENE in unique(df_temp$Scene)){
+    
+    # If that scene / PID combo is present in the original dataframe
+    if (any(df_rating$PID == PID & df_rating$Scene == SCENE)){
+      
+      # Copying the rating for that PID and SCENE
+      df_temp$Value_Rating[df_temp$PID == PID & df_temp$Scene == SCENE] <- df_rating$Value_Rating[df_rating$PID == PID & df_rating$Scene == SCENE] 
+    }
+  }
+}
+
+# Overwriting the now obsolete dataframe
+df_rating <- df_temp
+rm(df_temp, SCENE, PID, Scene)
+```
+
+```{r}
+## Now we ideally want to merge this with our df_rating dataframe
+df_rating <- merge(x = df_rating,
+                   y = df_qual,
+                   by = "PID",
+                   all.x = T)
+
+```
+
+```{r Generating Fake Recall Rating Data}
+## This is the equivalent, in my mind, of whether a scene was ever recalled by participants, independent of what order it was recalled in
+# I added the probability scale so that any given event has about a 60% of being recalled
+df_rating$Recalled <- sample(x = 0:1, 
+                             size = nrow(df_rating), 
+                             replace = T, 
+                             prob = c(0.40, 0.60)) 
+
+## This is the equivalent to identify which order participants recalled scenes in
+# Creating a series of NA's to start off
+df_rating$RecallOrder <- NA
+
+# Iterating through each unique PID
+for (PID in unique(df_rating$PID)){
+  
+  # Finding all rows for that PID that have a scene recalled
+  rows <- which(df_rating$PID == PID & df_rating$Recalled == 1)
+  
+  # Randomly assigning values to those rows 
+  # The probability scale makes it so that earlier events are slightly more likely to appear earlier in the order
+  df_rating$RecallOrder[rows] <- sample(x = 1:length(rows),
+                                        size = length(rows),
+                                        replace = F,
+                                        prob = 1:length(rows) / (1:length(rows))^4)
+  
+}
+
+## This is the equivalent to the Probability of First Recall Analysis
+df_rating$RecallFirst <- 0
+df_rating$RecallFirst[df_rating$RecallOrder == 1] <- 1
+```
