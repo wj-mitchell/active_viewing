@@ -17,7 +17,7 @@
 #' @export
 #'
 
-RatingCor <- function(Data,
+SceneByRating <- function(Data,
                        Condition,
                        SceneBreaks,
                        RunCor = F,
@@ -43,7 +43,7 @@ df_new <- read.csv(Data,
                    row.names = 1) %>%
   
              ## selecting only participants who rated the first half
-             subset(.$Conditionition == Condition) %>%
+             subset(.$Condition == Condition) %>%
       
              ## selecting the desired/necessary columns for pivoting
              select('PID', 'CertRate','SecondEnd')
@@ -144,22 +144,19 @@ if (RunCor == F){
 
 ## If we want correlations ...
 if (RunCor == T){
+  
   ## Constructing a correlation matrix
-  df_cor <- cor(df_scenelvl,
-                method = "spearman")
+  df_long <- cor(df_scenelvl,
+                method = "spearman") %>%
+
+  # Remove the upper triangle by setting it to NA
+  { .[upper.tri(., diag = TRUE)] <- NA; . } %>%
+  
   # Convert the correlation matrix to a long format dataframe
-  df_long <- melt(df_cor)
+  melt(na.rm = TRUE)
   
   # Name the columns for clarity
   names(df_long) <- c("PID_2", "PID_1", "Correlation")
-  
-  # Remove redundant pairs (upper triangle and diagonal)
-  Delete_Rows <- NULL
-  for (ROW in 1:nrow(df_long)){
-    if (which(df_long$PID_1[ROW] == sort(names(df)[participant_columns])) >= which(df_long$PID_2[ROW] == sort(names(df)[participant_columns])))
-      Delete_Rows <- c(Delete_Rows, ROW)
-  }
-  df_long <- df_long[-Delete_Rows,]
   
   return(df_long)  
 }
