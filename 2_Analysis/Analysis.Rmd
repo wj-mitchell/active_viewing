@@ -29,7 +29,20 @@ pacman::p_load(corrplot,
 
 ```{r Pulling in the Qualtrics Data}
 ## From this we want to know who participants had thought had done it at the end of each section
-df_qual <- read.csv(paste0(dir_Work, "/3_Data/Qualtrics/df_qualtrics.csv"))
+df_qual <- read.csv(paste0(dir_Work, "/3_Data/Qualtrics/df_qualtrics.csv")) %>%
+           select("PID", starts_with("ChrAssess_")) %>%
+           na.omit() %>%
+           merge(x = paste0(dir_Work, "/3_Data/conditions.csv") %>% read.csv() %>% .[,1:2],
+                 y = .,
+                 by.x = "Subject",
+                 by.y = "PID") %>%
+           pivot_longer(cols = starts_with("ChrAssess_"),
+                        names_to = "Category",
+                        values_to = "Assessment") %>%
+           mutate(Character = str_extract(string = Category, "(?<=ChrAssess_)[^_]+"),
+                  Category = str_extract(string = Category, "[^_]+$"),
+                  PID = Subject) %>%
+           select(-Subject)
 
 ## Noting who rated which half
 df_qual$Rated <- NA
@@ -49,9 +62,7 @@ df_recall <- read.csv(paste0(dir_Work,"/3_Data/Recall/df_recall.csv")) %>%
              mutate(PID = paste0("SR-", sprintf("%04d", as.integer(PID))))
 ```
 
-# ----- SERIAL POSITION CURVE ANALYSIS -----
-
-## Organizing the data
+# ----- DATA WRANGLING -----
 
 ```{r Creating a New Empty Dataframe to Rehouse the Data Into}
 # Save every unique PID as a variable
@@ -132,7 +143,71 @@ df_recall_long <- df_recall_wide %>%
                          Recalled_Cat = ifelse(Recalled == 1, "Recalled", "Not Recalled"))
 ```
 
-## Analyzing the Data
+```{r Constructing a within subject summary dataframe}
+# Constructing a summary dataframe to capture the proportion of rated and not rated events captured in each subject's free recall 
+df_summary <- df_recall_long %>% group_by(PID, Congruent) %>%
+              summarize(Proportion_Recalled = mean(Recalled == 1, 
+                                                   na.rm = TRUE))
+```
+
+```{r Creating a dataframe specifically for RSA}
+df_rsa <- df_recall_wide %>%
+  
+  # Step 1: Select only the Assessment columns
+  select(starts_with("SR-")) %>%
+
+  # Step 2: Calculate pairwise correlations across all Assessment columns
+  cor(method = "spearman", use = "complete.obs") %>%
+  
+  # Step 3: Remove the upper triangle by setting it to NA
+  { .[upper.tri(., diag = TRUE)] <- NA; . } %>%
+
+  # Step 4: Melt the matrix for ggplot
+  melt(na.rm = TRUE) %>%
+  
+  # Step 5: Add condition columns by joining with rating data
+  left_join(paste0(dir_Work, "/3_Data/conditions.csv") %>% read.csv() %>% .[,1:2], by = c("Var1" = "Subject")) %>%
+  rename(Condition_Var1 = Condition) %>%
+  left_join(paste0(dir_Work, "/3_Data/conditions.csv") %>% read.csv() %>% .[,1:2], by = c("Var2" = "Subject")) %>%
+  rename(Condition_Var2 = Condition) %>%
+  
+  # Step 6: Add a column indicating if the conditions match or not
+  mutate(Condition_Match = ifelse(Condition_Var1 == Condition_Var2, "Match", "Do Not Match"))
+```
+
+
+```{r Creating a dataframe to conduct RSA on character assessments}
+df_characteracter <- df_qual %>%
+  
+                # Step 1: Reducing the dataframe to a few relevant variables 
+                select(PID, Assessment, Category, Character) %>%
+  
+                # Step 2: Pivoting to a wider format
+                pivot_wider(names_from = PID, values_from = Assessment) %>%
+  
+                # Step 3: Select only the Assessment columns
+                select(starts_with("SR-")) %>%
+              
+                # Step 4: Calculate pairwise correlations across all Assessment columns
+                cor(method = "spearman", use = "complete.obs") %>%
+                
+                # Step 5: Remove the upper triangle by setting it to NA
+                { .[upper.tri(., diag = TRUE)] <- NA; . } %>%
+              
+                # Step 6: Melt the matrix for ggplot
+                melt(na.rm = TRUE) %>%
+                
+                # Step 7: Add condition columns by joining with rating data
+                left_join(paste0(dir_Work, "/3_Data/conditions.csv") %>% read.csv() %>% .[,1:2], by = c("Var1" = "Subject")) %>%
+                rename(Condition_Var1 = Condition) %>%
+                left_join(paste0(dir_Work, "/3_Data/conditions.csv") %>% read.csv() %>% .[,1:2], by = c("Var2" = "Subject")) %>%
+                rename(Condition_Var2 = Condition) %>%
+                
+                # Step 8: Add a column indicating if the conditions match or not
+                mutate(Condition_Match = ifelse(Condition_Var1 == Condition_Var2, "Match", "Do Not Match"))
+```
+
+# ----- ANALYZING RECALL DATA -----
 
 ```{r Chi Square Test for Rating}
 # Creating a chi-square test to determine whether there are differences in what proportion of scenes subjects recall by whether the scenes occurred while they were rating or not rating
@@ -165,12 +240,7 @@ chisq.test(x = df_recall_long$Congruent,
   plot
 ```
 
-```{r Constructing a within subject summary dataframe}
-# Constructing a summary dataframe to capture the proportion of rated and not rated events captured in each subject's free recall 
-df_summary <- df_recall_long %>% group_by(PID, Congruent) %>%
-              summarize(Proportion_Recalled = mean(Recalled == 1, 
-                                                   na.rm = TRUE))
-
+```{r Conducting within-subject t-test}
 # Conducting a within-subject t-test between rated and not rated scenes
 t.test(x = df_summary$Proportion_Recalled[df_summary$Congruent == "Rated"],
        y = df_summary$Proportion_Recalled[df_summary$Congruent == "Not Rated"],
@@ -178,43 +248,82 @@ t.test(x = df_summary$Proportion_Recalled[df_summary$Congruent == "Rated"],
 ```
 
 
-```{r}
-rating <- paste0(dir_Work, "/3_Data/conditions.csv") %>%
-  read.csv() %>% 
-  .[,1:2]
-
-df_rsa <- df_recall_wide %>%
-  
-  # Step 1: Select only the Assessment columns
-  select(starts_with("SR-")) %>%
-
-  # Step 2: Calculate pairwise correlations across all Assessment columns
-  cor(use = "complete.obs") %>%
-  
-  # Step 3: Remove the upper triangle by setting it to NA
-  { .[upper.tri(., diag = TRUE)] <- NA; . } %>%
-
-  # Step 4: Melt the matrix for ggplot
-  melt(na.rm = TRUE) %>%
-  
-  # Step 5: Add condition columns by joining with rating data
-  left_join(rating, by = c("Var1" = "Subject")) %>%
-  rename(Condition_Var1 = Condition) %>%
-  left_join(rating, by = c("Var2" = "Subject")) %>%
-  rename(Condition_Var2 = Condition) %>%
-  
-  # Step 6: Add a column indicating if the conditions match or not
-  mutate(Condition_Match = ifelse(Condition_Var1 == Condition_Var2, "Match", "Do Not Match"))
-
+```{r Conducting a t-test of correlative values}
 # Calculating if there's a difference by condition in a t-test
 print(t.test(x = df_rsa$value[df_rsa$Condition_Match == "Match"],
              y = df_rsa$value[df_rsa$Condition_Match == "Do Not Match"]))
+```
+
+```{r Conducting permutation testing}
+# for reproducibility
+set.seed(123) 
+
+# Calculating the observed difference
+observed_diff <- df_rsa %>%
+  group_by(Condition_Match) %>%
+  summarize(mean_correlation = mean(value)) %>%
+  spread(Condition_Match, mean_correlation) %>%
+  summarize(diff = `Match` - `Do Not Match`) %>%
+  pull(diff)
+
+# Initialize parameters
+n_permutations <- 5000
+permuted_diffs <- numeric(n_permutations)
+
+# Permutation loop
+for (i in 1:n_permutations) {
   
+  # Randomly shuffle condition labels
+  shuffled_conditions <- sample(df_rsa$Condition_Match)
+  
+  # Calculate mean difference for shuffled data
+  permuted_diff <- df_rsa %>%
+    mutate(Shuffled_Condition = shuffled_conditions) %>%
+    group_by(Shuffled_Condition) %>%
+    summarize(mean_correlation = mean(value)) %>%
+    spread(Shuffled_Condition, mean_correlation) %>%
+    summarize(diff = `Match` - `Do Not Match`) %>%
+    pull(diff)
+  
+  # Store the permuted difference
+  permuted_diffs[i] <- permuted_diff
+}
+
+# Calculate p-value
+p_value <- mean(abs(permuted_diffs) >= abs(observed_diff))
+
+# Display results
+cat("Observed Difference:", observed_diff, "\n")
+cat("p-value:", p_value, "\n")
+```
+
+# ----- ANALYZING CHARACTER DATA -----
+
+```{r Computing T-Tests for each category}
+# I'm not using these so I'm not wasting my time with multiple comparison adjustments. None of them pass anyway.
+for (TRAIT in df_qual$Category %>% unique()){
+  print(t.test(x = df_qual$Assessment[df_qual$Condition == "A" & df_qual$Category == TRAIT],
+               y = df_qual$Assessment[df_qual$Condition == "B" & df_qual$Category == TRAIT]))
+}
+
+for (CHARACTER in df_qual$Character %>% unique()){
+  print(t.test(x = df_qual$Assessment[df_qual$Condition == "A" & df_qual$Character == CHARACTER],
+               y = df_qual$Assessment[df_qual$Condition == "B" & df_qual$Character == CHARACTER]))
+}
+```
+
+```{r Compute a T-Test for RSA Results}
+# Calculating if there's a difference by condition in a t-test
+print(t.test(x = df_character$value[df_character$Condition_Match == "Match"],
+             y = df_character$value[df_character$Condition_Match == "Do Not Match"]))
+```
+
+```{r Permutation Testing for charcter Analysis}
   # for reproducibility
   set.seed(123) 
   
   # Assuming `similarity_matrix` is your dataframe with same/different condition categorization
-  observed_diff <- df_rsa %>%
+  observed_diff <- df_character %>%
     group_by(Condition_Match) %>%
     summarize(mean_correlation = mean(value)) %>%
     spread(Condition_Match, mean_correlation) %>%
@@ -229,10 +338,10 @@ print(t.test(x = df_rsa$value[df_rsa$Condition_Match == "Match"],
   for (i in 1:n_permutations) {
     
     # Randomly shuffle condition labels
-    shuffled_conditions <- sample(df_rsa$Condition_Match)
+    shuffled_conditions <- sample(df_character$Condition_Match)
     
     # Calculate mean difference for shuffled data
-    permuted_diff <- df_rsa %>%
+    permuted_diff <- df_character %>%
       mutate(Shuffled_Condition = shuffled_conditions) %>%
       group_by(Shuffled_Condition) %>%
       summarize(mean_correlation = mean(value)) %>%
@@ -250,144 +359,5 @@ print(t.test(x = df_rsa$value[df_rsa$Condition_Match == "Match"],
   # Display results
   cat("Observed Difference:", observed_diff, "\n")
   cat("p-value:", p_value, "\n")
-
-
-
 ```
 
-```{r Calculating Averages by Rating Status}
-df_recall_wide$FH_Avg <- NA
-df_recall_wide$SH_Avg <- NA
-
-df_recall_wide$FH_Avg <- rowMeans(df_recall_wide[,which(names(df_recall_wide) %in% raters_FH)], 
-                                     na.rm = T)
-df_recall_wide$SH_Avg <- rowMeans(df_recall_wide[, which(names(df_recall_wide) %in% raters_SH)], 
-                                                          na.rm = T)
-
-## Cleaning Our Space
-rm(Jon_FH, Jon_SH, NoJon_FH, NoJon_SH, raters_FH, raters_SH)
-```
-
-```{r Standard Serial Position Curve}
-# Create the first plot
-plot(df_recall_wide$Scene, df_recall_wide$FH_Avg, type = "l", 
-     col = "blue", xlab = "Scene Number", ylab = "Proportion Recalled", 
-     main = "Serial Position Curve - First v. Second Half")
-
-# Add the second line
-lines(df_recall_wide$Scene, df_recall_wide$SH_Avg, type = "l", col = "red")
-```
-
-
-```{r Standard Serial Position Curve}
-# Create the first plot
-plot(df_recall_wide$Scene, df_recall_wide$Jon_Avg, type = "l", 
-     col = "green", xlab = "Scene Number", ylab = "Proportion Recalled", 
-     main = "Serial Position Curve - Jonathan v. Not Jonathan Theory")
-
-# Add the second line
-lines(df_recall_wide$Scene, df_recall_wide$NoJon_Avg, type = "l", col = "purple")
-```
-
-## Synchrony Analysis
-
-```{r Calculating Recall Synchrony}
-## Constructing a correlation matrix
-df_recall_cor <- cor(df_recall_wide[,which(str_detect(colnames(df_recall_wide), "SR-"))],
-                     method = "spearman")
-
-# Convert the correlation matrix to a long format dataframe
-df_recall_cor <- melt(df_recall_cor)
-  
-# Name the columns for clarity
-names(df_recall_cor) <- c("PID_2", "PID_1", "Recall_Correlation")
-  
-# Remove redundant pairs (upper triangle and diagonal)
-Delete_Rows <- NULL
-for (ROW in 1:nrow(df_recall_cor)){
-  if (which(df_recall_cor$PID_1[ROW] == sort(PIDs)) >= which(df_recall_cor$PID_2[ROW] == sort(PIDs)))
-    Delete_Rows <- c(Delete_Rows, ROW)
-}
-df_recall_cor <- df_recall_cor[-Delete_Rows,]
-```
-
-```{r Calculating Behavioral Synchrony}
-df_FH <- SceneByRating(Data = paste0(dir_Work, "/Data/df_behav_.csv"),
-                    Cond = "A",
-                    SceneBreaks = c(0, 189, 241, 243, 419,
-                                   431, 521, 527, 581, 625,
-                                   757, 797, 827, 877, 885,
-                                   983, 1133, 1273, 1291, 1337),
-                   RunCor = T) 
-
-df_SH <- SceneByRating(Data = paste0(dir_Work, "/Data/df_behav_.csv"),
-                    Cond = "B",
-                    SceneBreaks = c(0, 14, 28, 75, 158,
-                                   186, 279, 283, 335,
-                                   398, 405, 681, 877,
-                                   604, 1062, 1067, 1337),
-                    RunCor = T) 
-
-# Binding the dataframes together for First and Second Half Raters
-df_SceneByRating <- rbind(df_FH,
-                       df_SH)
-
-# Name the columns for clarity
-names(df_SceneByRating) <- c("PID_2", "PID_1", "SceneByRatingrelation")
-
-## Cleaning Space 
-rm(df_FH, df_SH)
-```
-
-```{r Merging Dataframes}
-df_cor <- merge(df_recall_cor,
-                df_SceneByRating,
-                by = c("PID_1", "PID_2"))
-```
-
-```{r}
-df_cor$Theory <- NA
-
-# Iterating through each PID twice
-for (PID1 in unique(df_qual$PID)){
-  for (PID2 in unique(df_qual$PID)){
-    if (PID1 != PID2){ 
-      if (df_qual$Rated[df_qual$PID == PID1] == "First" & !is.na(df_qual$Rated[df_qual$PID == PID1])){
-        if (df_qual$Mid_Theory[df_qual$PID == PID1] == df_qual$Mid_Theory[df_qual$PID == PID2]){
-          df_cor$Theory[df_cor$PID_1 == PID1 & df_cor$PID_2 == PID2] <- "Same"
-        }
-        if (df_qual$Mid_Theory[df_qual$PID == PID1] != df_qual$Mid_Theory[df_qual$PID == PID2]){
-          df_cor$Theory[df_cor$PID_1 == PID1 & df_cor$PID_2 == PID2] <- "Different"
-        }
-      }
-      if (df_qual$Rated[df_qual$PID == PID1] == "Last"& !is.na(df_qual$Rated[df_qual$PID == PID1] )){
-        if (df_qual$End_Theory[df_qual$PID == PID1] == df_qual$End_Theory[df_qual$PID == PID2]){
-          df_cor$Theory[df_cor$PID_1 == PID1 & df_cor$PID_2 == PID2] <- "Same"
-        }
-        if (df_qual$End_Theory[df_qual$PID == PID1] != df_qual$End_Theory[df_qual$PID == PID2]){
-          df_cor$Theory[df_cor$PID_1 == PID1 & df_cor$PID_2 == PID2] <- "Different"
-        }
-      }
-    }
-  }
-}
-```
-
-```{r Running a null HLM to see if Rating Synchrony Predicts Recall Synchrony}
-m0 <- lmer(Recall_Correlation ~ 1 + (1|PID_1) + (1|PID_2), data = df_cor, REML = F)
-icc(m0)
-```
-
-```{r Testing Our Hypothesized Interaction Model}
-m1 <- lmer(Recall_Correlation ~ SceneByRatingrelation * Theory + (1|PID_1) + (1|PID_2), data = df_cor, REML = F)
-summary(m1)
-```
-
-```{r Specifying a Comparison Model for Comparison}
-m2 <- lmer(Recall_Correlation ~ SceneByRatingrelation + Theory + (1|PID_1) + (1|PID_2), data = df_cor, REML = F)
-anova(m2,m1)
-```
-
-```{r}
-sjPlot::plot_model(m1, type = "int")
-```
