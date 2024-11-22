@@ -31,7 +31,7 @@ pacman::p_load(corrplot,
 ## From this we want to know who participants had thought had done it at the end of each section
 df_qual <- read.csv(paste0(dir_Work, "/3_Data/Qualtrics/df_qualtrics.csv")) %>%
            select("PID", starts_with("ChrAssess_")) %>%
-           na.omit() %>%
+           # na.omit() %>%
            merge(x = paste0(dir_Work, "/3_Data/conditions.csv") %>% read.csv() %>% .[,1:2],
                  y = .,
                  by.x = "Subject",
@@ -43,11 +43,17 @@ df_qual <- read.csv(paste0(dir_Work, "/3_Data/Qualtrics/df_qualtrics.csv")) %>%
                   Category = str_extract(string = Category, "[^_]+$"),
                   PID = Subject) %>%
            select(-Subject)
+```
+
+```{r Creating a Condition Dataframe}
+## Creating a PID dataframe
+df_condition <- df_qual$PID %>% as.data.frame %>% distinct
+names(df_condition) <- "PID"
 
 ## Noting who rated which half
-df_qual$Rated <- NA
-df_qual$Rated[which(df_qual$PID %in% unique(subset(read.csv(paste0(dir_Work, "/3_Data/Ratings/df_behav.csv")), Condition == "A")$PID))] <- "First" 
-df_qual$Rated[which(df_qual$PID %in% unique(subset(read.csv(paste0(dir_Work, "/3_Data/Ratings/df_behav.csv")), Condition == "B")$PID))] <- "Last" 
+df_condition$Rated <- NA
+df_condition$Rated[which(df_condition$PID %in% unique(subset(read.csv(paste0(dir_Work, "/3_Data/Ratings/df_behav.csv")), Condition == "A")$PID))] <- "First" 
+df_condition$Rated[which(df_condition$PID %in% unique(subset(read.csv(paste0(dir_Work, "/3_Data/Ratings/df_behav.csv")), Condition == "B")$PID))] <- "Last" 
 ```
 
 ## ----- READING IN RECALL DATA -----
@@ -136,8 +142,9 @@ df_recall_long <- df_recall_wide %>%
                                values_to = "Recalled") %>%
                   select(c(PID,Scene,Recalled)) %>%
                   merge(.,
-                        subset(df_qual, !is.na(df_qual$Rated), select = c("PID","Rated")), 
-                        by = "PID") %>%
+                        subset(df_qual, select = c("PID","Rated")), 
+                        by = "PID", all.x = T) %>%
+                  distinct() %>%
                   mutate(Half = ifelse(Scene < 19.5, "First", "Last"),
                          Congruent = ifelse(Rated == Half, "Rated", "Not Rated"),
                          Recalled_Cat = ifelse(Recalled == 1, "Recalled", "Not Recalled"))
@@ -177,33 +184,36 @@ df_rsa <- df_recall_wide %>%
 
 
 ```{r Creating a dataframe to conduct RSA on character assessments}
-df_characteracter <- df_qual %>%
+df_character <- df_qual %>%
   
                 # Step 1: Reducing the dataframe to a few relevant variables 
                 select(PID, Assessment, Category, Character) %>%
   
-                # Step 2: Pivoting to a wider format
+                # Step 2: Remove NA character assessments
+                subset(., !is.na(.$Assessment)) %>%              
+  
+                # Step 3: Pivoting to a wider format
                 pivot_wider(names_from = PID, values_from = Assessment) %>%
   
-                # Step 3: Select only the Assessment columns
+                # Step 4: Select only the Assessment columns
                 select(starts_with("SR-")) %>%
               
-                # Step 4: Calculate pairwise correlations across all Assessment columns
+                # Step 5: Calculate pairwise correlations across all Assessment columns
                 cor(method = "spearman", use = "complete.obs") %>%
                 
-                # Step 5: Remove the upper triangle by setting it to NA
+                # Step 6: Remove the upper triangle by setting it to NA
                 { .[upper.tri(., diag = TRUE)] <- NA; . } %>%
               
-                # Step 6: Melt the matrix for ggplot
+                # Step 7: Melt the matrix for ggplot
                 melt(na.rm = TRUE) %>%
                 
-                # Step 7: Add condition columns by joining with rating data
+                # Step 8: Add condition columns by joining with rating data
                 left_join(paste0(dir_Work, "/3_Data/conditions.csv") %>% read.csv() %>% .[,1:2], by = c("Var1" = "Subject")) %>%
                 rename(Condition_Var1 = Condition) %>%
                 left_join(paste0(dir_Work, "/3_Data/conditions.csv") %>% read.csv() %>% .[,1:2], by = c("Var2" = "Subject")) %>%
                 rename(Condition_Var2 = Condition) %>%
                 
-                # Step 8: Add a column indicating if the conditions match or not
+                # Step 9: Add a column indicating if the conditions match or not
                 mutate(Condition_Match = ifelse(Condition_Var1 == Condition_Var2, "Match", "Do Not Match"))
 ```
 
@@ -220,13 +230,13 @@ chisq.test(x = df_recall_long$Congruent,
   plot <- ggplot(data = df_recall_long, aes(x = Congruent, color = Recalled_Cat, fill = Recalled_Cat)) +
         geom_bar() +
         # scale_x_discrete("Condition") +
-        scale_y_continuous(breaks = c(0,100,200,300,400)) +
+        # scale_y_continuous(breaks = c(0,100,200,300,400)) +
         labs(
              x = NULL,
              y ="Frequency") +
         scale_color_brewer() +
         scale_fill_brewer(palette = "Accent") +
-        coord_cartesian(ylim=c(0.0, 425.0)) +
+        # coord_cartesian(ylim=c(0.0, 425.0)) +
         theme_classic() +
         theme(plot.title = element_text(face="bold", size=8, hjust = 0.5)) +
         theme(plot.subtitle = element_text(size = 10, hjust = 0.5, face = "italic")) +
